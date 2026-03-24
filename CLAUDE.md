@@ -2,12 +2,16 @@
 
 ## Overview
 
-macOS menu bar voice input tool with multi-provider ASR support (Volcengine implemented, others coming soon) and optional LLM post-processing.
-Swift Package Manager project, no Xcode project file, no third-party dependencies.
+macOS menu bar voice input tool with local + cloud ASR support and optional LLM post-processing.
+Local ASR via SherpaOnnx (Paraformer/Zipformer), cloud ASR via Volcengine (others coming soon).
+Swift Package Manager project, no Xcode project file. Depends on `sherpa-onnx.xcframework` (local binary).
 
 ## Build & Run
 
 ```bash
+# First time: build sherpa-onnx.xcframework (~5 min, requires cmake)
+bash scripts/build-sherpa.sh
+
 swift build -c release
 ```
 
@@ -17,10 +21,10 @@ The built binary is at `.build/release/Type4Me`. To package it as a `.app` bundl
 
 Multi-provider ASR support via `ASRProvider` enum + `ASRProviderConfig` protocol + `ASRProviderRegistry`.
 
-- `ASRProvider` enum: 10 cases (openai/azure/google/aws/deepgram/volcano/aliyun/tencent/iflytek/custom)
-- Each provider has its own Config type (e.g., `VolcanoASRConfig`) defining `credentialFields` for dynamic UI rendering
+- `ASRProvider` enum: 13 cases (sherpa/openai/azure/google/aws/deepgram/assemblyai/volcano/aliyun/tencent/baidu/iflytek/custom)
+- Each provider has its own Config type (e.g., `SherpaASRConfig`, `VolcanoASRConfig`) defining `credentialFields` for dynamic UI rendering
 - `ASRProviderRegistry`: maps provider to config type + client factory; `isAvailable` indicates whether a client implementation exists
-- Currently `volcano` and `deepgram` have a non-nil `createClient`; others are coming soon
+- `sherpa` (local), `volcano` (cloud), and `deepgram` (cloud) are fully implemented; others are coming soon
 
 ### Adding a New Provider
 
@@ -61,11 +65,16 @@ Credentials are stored at `~/Library/Application Support/Type4Me/credentials.jso
 | `Type4Me/ASR/ASRProviderRegistry.swift` | Registry: provider → config + client factory |
 | `Type4Me/ASR/Providers/*.swift` | Per-vendor Config implementations |
 | `Type4Me/ASR/SpeechRecognizer.swift` | SpeechRecognizer protocol + LLMConfig + event types |
-| `Type4Me/ASR/VolcASRClient.swift` | Streaming ASR (WebSocket) |
-| `Type4Me/ASR/VolcFlashASRClient.swift` | Flash ASR (HTTP, one-shot) |
+| `Type4Me/ASR/SherpaASRClient.swift` | Local streaming ASR (Paraformer/Zipformer) |
+| `Type4Me/ASR/SherpaOfflineASRClient.swift` | Local offline ASR (single-pass) |
+| `Type4Me/ASR/SherpaPunctuationProcessor.swift` | Local punctuation restoration |
+| `Type4Me/Bridge/SherpaOnnxBridge.swift` | SherpaOnnx C API Swift bridge |
+| `Type4Me/ASR/VolcASRClient.swift` | Cloud streaming ASR (WebSocket) |
+| `Type4Me/ASR/VolcFlashASRClient.swift` | Cloud Flash ASR (HTTP, one-shot) |
 | `Type4Me/Session/RecognitionSession.swift` | Core state machine: record → ASR → inject |
 | `Type4Me/Audio/AudioCaptureEngine.swift` | Audio capture, `getRecordedAudio()` returns full recording |
 | `Type4Me/UI/AppState.swift` | `ProcessingMode` definition, built-in mode list |
+| `Type4Me/Services/ModelManager.swift` | Local model download, validation, selection |
 | `Type4Me/Services/KeychainService.swift` | Credential read/write (provider groups + migration) |
 | `Type4Me/Services/HotwordStorage.swift` | ASR hotword storage (UserDefaults) |
 | `scripts/deploy.sh` | Build + deploy + launch |

@@ -110,11 +110,36 @@ actor RecognitionSession {
         hasEmittedReadyForCurrentSession = false
         state = .starting
 
-        // Load credentials for selected provider
+        // Load credentials / config for selected provider
         let provider = KeychainService.selectedASRProvider
         let config: any ASRProviderConfig
 
-        if let savedConfig = KeychainService.loadASRConfig(for: provider) {
+        if provider.isLocal {
+            // Local providers: use default model directory if no saved config
+            if let savedConfig = KeychainService.loadASRConfig(for: provider) {
+                config = savedConfig
+                NSLog("[Session] Loaded %@ config from file store", provider.rawValue)
+            } else if let defaultConfig = SherpaASRConfig(credentials: ["modelDir": ModelManager.defaultModelsDir]) {
+                config = defaultConfig
+                NSLog("[Session] Using default model directory for %@", provider.rawValue)
+            } else {
+                NSLog("[Session] Failed to create default config for %@!", provider.rawValue)
+                SoundFeedback.playError()
+                state = .idle
+                onASREvent?(.error(NSError(domain: "Type4Me", code: -1, userInfo: [NSLocalizedDescriptionKey: L("本地模型未配置", "Local model not configured")])))
+                onASREvent?(.completed)
+                return
+            }
+            // Verify required models are downloaded
+            if !ModelManager.shared.areRequiredModelsAvailable() {
+                NSLog("[Session] Required local models not downloaded for %@", provider.rawValue)
+                SoundFeedback.playError()
+                state = .idle
+                onASREvent?(.error(NSError(domain: "Type4Me", code: -3, userInfo: [NSLocalizedDescriptionKey: L("请先下载识别模型", "Please download ASR models first")])))
+                onASREvent?(.completed)
+                return
+            }
+        } else if let savedConfig = KeychainService.loadASRConfig(for: provider) {
             config = savedConfig
             NSLog("[Session] Loaded %@ credentials from file store", provider.rawValue)
         } else if provider == .volcano,
@@ -302,22 +327,28 @@ actor RecognitionSession {
             }
         }
 
-        // Dual-channel: kick off file ASR immediately — runs concurrently with streaming
-        // ASR finalization below, so the HTTP round-trip overlaps the ≤1s streaming wait.
+        // Dual-channel: kick off offline ASR immediately — runs concurrently with streaming
+        // ASR finalization below, so the round-trip overlaps the ≤1s streaming wait.
+        // Provider-agnostic: uses registry's offlineRecognize if the provider supports it.
         activeFlashTask?.cancel()
         activeFlashTask = nil
-        if isPerformanceMode, let volcConfig = currentConfig as? VolcanoASRConfig {
+        let provider = KeychainService.selectedASRProvider
+        if isPerformanceMode,
+           let entry = ASRProviderRegistry.entry(for: provider),
+           entry.supportsDualChannel,
+           let offlineRecognize = entry.offlineRecognize,
+           let config = currentConfig {
             let pcmData = audioEngine.getRecordedAudio()
             if !pcmData.isEmpty {
                 activeFlashTask = Task {
                     do {
-                        let text = try await VolcFlashASRClient.recognize(pcmData: pcmData, config: volcConfig)
-                        NSLog("[Session] Dual-channel Flash ASR: %@", String(text.prefix(100)))
-                        DebugFileLogger.log("dual-channel flash result: \(text)")
+                        let text = try await offlineRecognize(pcmData, config)
+                        NSLog("[Session] Dual-channel offline ASR: %@", String(text.prefix(100)))
+                        DebugFileLogger.log("dual-channel offline result: \(text)")
                         return text.isEmpty ? nil : text
                     } catch {
-                        NSLog("[Session] Dual-channel Flash ASR failed: %@, using streaming text", String(describing: error))
-                        DebugFileLogger.log("dual-channel flash failed: \(String(describing: error))")
+                        NSLog("[Session] Dual-channel offline ASR failed: %@, using streaming text", String(describing: error))
+                        DebugFileLogger.log("dual-channel offline failed: \(String(describing: error))")
                         return nil
                     }
                 }
