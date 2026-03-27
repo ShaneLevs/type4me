@@ -1,6 +1,11 @@
 {
-  "latest": "1.3.0",
+  "latest": "1.3.1",
   "releases": [
+    {
+      "version": "1.3.1",
+      "date": "2026-03-27",
+      "notes": "- 新增百度实时语音识别引擎 (contributed by @jimmyzhuu)\n- ASR 设置页增加配置指引链接 (contributed by @zebangeth)\n- 关于页面移除硬编码引擎字段 (contributed by @zebangeth)\n- 区分「已保存」和「连接成功」状态 (contributed by @afetmin)\n- 构建脚本重构，新增 DMG 打包脚本 (contributed by @afetmin)\n- 更新默认模式 Prompt 和快捷键配置"
+    },
     {
       "version": "1.3.0",
       "date": "2026-03-27",
