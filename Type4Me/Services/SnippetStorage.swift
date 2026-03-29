@@ -13,7 +13,7 @@ enum SnippetStorage {
     /// tolerate whitespace variations via buildFlexPattern.
     ///
     /// Verified against: Volcengine Seed ASR 2.0, Qwen3-ASR 0.6B/1.7B, SenseVoice-Small.
-    private static let defaultSnippets: [(trigger: String, value: String)] = [
+    static let builtinSnippets: [(trigger: String, value: String)] = [
         // ── vibe coding (all engines consistently fail) ──
         ("web coding",      "vibe coding"),
         ("webb coding",     "vibe coding"),
@@ -28,14 +28,27 @@ enum SnippetStorage {
 
         // ── Model & company names ──
         ("Asthropic",       "Anthropic"),
+        ("Anthropropic",    "Anthropic"),
+        ("Anthropick",      "Anthropic"),
+        ("Anthrobic",       "Anthropic"),
         ("ELMA",            "Llama"),
         ("OELMA",           "Ollama"),
         ("finight tuning",  "fine-tuning"),
+        ("fine tune",       "fine-tune"),
 
         // ── Frameworks & tools ──
         ("long chain",      "LangChain"),
         ("long train",      "LangChain"),
         ("LongChain",       "LangChain"),
+        ("get hub",         "GitHub"),
+        ("git hub",         "GitHub"),
+        ("VS code",         "VS Code"),
+        ("Kubanetes",       "Kubernetes"),
+        ("Kubenetes",       "Kubernetes"),
+        ("Nextjs",          "Next.js"),
+        ("next js",         "Next.js"),
+        ("type script",     "TypeScript"),
+        ("open source",     "open-source"),
 
         // ── SenseVoice-specific garbled output ──
         ("pinecom",         "Pinecone"),
@@ -51,7 +64,7 @@ enum SnippetStorage {
         guard !UserDefaults.standard.bool(forKey: seededKey) else { return }
         var existing = load()
         let existingTriggers = Set(existing.map { $0.trigger.lowercased() })
-        for snippet in defaultSnippets where !existingTriggers.contains(snippet.trigger.lowercased()) {
+        for snippet in builtinSnippets where !existingTriggers.contains(snippet.trigger.lowercased()) {
             existing.append(snippet)
         }
         save(existing)
@@ -83,6 +96,28 @@ enum SnippetStorage {
         guard !snippets.isEmpty else { return text }
         var result = text
         for snippet in snippets {
+            let pattern = buildFlexPattern(snippet.trigger)
+            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+                result = regex.stringByReplacingMatches(
+                    in: result,
+                    range: NSRange(result.startIndex..., in: result),
+                    withTemplate: NSRegularExpression.escapedTemplate(for: snippet.value)
+                )
+            }
+        }
+        return result
+    }
+
+    /// Apply builtin + user snippets (user overrides builtin on trigger conflict).
+    static func applyEffective(to text: String) -> String {
+        let userSnippets = load()
+        let userTriggers = Set(userSnippets.map { $0.trigger.lowercased() })
+        // Builtin snippets, excluding those overridden by user
+        let effectiveBuiltin = builtinSnippets.filter { !userTriggers.contains($0.trigger.lowercased()) }
+        let allSnippets = effectiveBuiltin + userSnippets
+
+        var result = text
+        for snippet in allSnippets {
             let pattern = buildFlexPattern(snippet.trigger)
             if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
                 result = regex.stringByReplacingMatches(

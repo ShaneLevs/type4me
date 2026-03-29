@@ -18,17 +18,33 @@ import os
 import socket
 import struct
 import sys
-import tempfile
 import time
 from pathlib import Path
 
 import numpy as np
-import soundfile as sf
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 import re
 import threading
+
+
+class CancelToken:
+    """Cooperative cancellation for thread-pool tasks."""
+    __slots__ = ("_cancelled", "_lock")
+
+    def __init__(self):
+        self._cancelled = False
+        self._lock = threading.Lock()
+
+    def cancel(self):
+        with self._lock:
+            self._cancelled = True
+
+    @property
+    def is_cancelled(self) -> bool:
+        with self._lock:
+            return self._cancelled
 
 app = FastAPI()
 
@@ -38,7 +54,8 @@ _hotword_context = ""  # Hotwords as context string for transcribe()
 _inference_lock = threading.Lock()  # Prevent concurrent Metal GPU access (thread-level)
 
 SAMPLE_RATE = 16000
-PARTIAL_INTERVAL_SEC = 1.0  # Run partial transcribe every N seconds of new audio
+PARTIAL_INTERVAL_SEC = 1.5  # Run partial transcribe every N seconds of new audio
+MAX_PARTIAL_AUDIO_SEC = 45  # Only use last N seconds for partial (full audio for final)
 
 
 def get_session():
@@ -57,8 +74,10 @@ async def websocket_endpoint(ws: WebSocket):
     sess = get_session()
     all_samples: list[int] = []
     partial_threshold = int(PARTIAL_INTERVAL_SEC * SAMPLE_RATE)
+    max_partial_samples = MAX_PARTIAL_AUDIO_SEC * SAMPLE_RATE
     last_partial_at = 0  # sample count at last partial
     inflight_partial = None  # track running partial task
+    cancel_token = CancelToken()  # shared cancellation for in-flight partials
 
     try:
         while True:
@@ -66,6 +85,7 @@ async def websocket_endpoint(ws: WebSocket):
 
             if len(data) == 0:
                 # ── End of audio: final transcribe with punctuation ──
+                cancel_token.cancel()  # signal any in-flight partial to bail out
                 if inflight_partial and not inflight_partial.done():
                     inflight_partial.cancel()
 
@@ -90,9 +110,13 @@ async def websocket_endpoint(ws: WebSocket):
             if new_audio >= partial_threshold:
                 if inflight_partial is None or inflight_partial.done():
                     last_partial_at = len(all_samples)
-                    samples_snapshot = list(all_samples)
+                    # Cap partial audio to last N seconds to avoid O(total) re-processing
+                    if len(all_samples) > max_partial_samples:
+                        samples_snapshot = list(all_samples[-max_partial_samples:])
+                    else:
+                        samples_snapshot = list(all_samples)
                     inflight_partial = asyncio.ensure_future(
-                        _send_partial(ws, sess, samples_snapshot)
+                        _send_partial(ws, sess, samples_snapshot, cancel_token)
                     )
 
     except WebSocketDisconnect:
@@ -104,10 +128,12 @@ async def websocket_endpoint(ws: WebSocket):
             pass
 
 
-async def _send_partial(ws: WebSocket, sess, samples: list[int]):
+async def _send_partial(ws: WebSocket, sess, samples: list[int],
+                        cancel_token: CancelToken | None = None):
     """Run transcribe on accumulated audio (no punctuation) and send as partial."""
     try:
-        text = await _transcribe(sess, samples, strip_punct=True)
+        text = await _transcribe(sess, samples, strip_punct=True,
+                                 cancel_token=cancel_token)
         if text:
             await ws.send_json({
                 "type": "transcript",
@@ -119,22 +145,32 @@ async def _send_partial(ws: WebSocket, sess, samples: list[int]):
 
 
 # Punctuation characters to strip from partial results
-_PUNCT_RE = re.compile(r'[，。！？、；：""''…,\.!?;:]')
+_PUNCT_RE = re.compile('[，。！？、；：""''…,.!?;:]')
 
 
-async def _transcribe(sess, samples_i16: list[int], strip_punct: bool = False) -> str:
+async def _transcribe(sess, samples_i16: list[int], strip_punct: bool = False,
+                      cancel_token: CancelToken | None = None) -> str:
     """Run offline transcribe on audio samples."""
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _transcribe_sync, sess, samples_i16, strip_punct)
+    return await loop.run_in_executor(
+        None, _transcribe_sync, sess, samples_i16, strip_punct, cancel_token
+    )
 
 
-def _transcribe_sync(sess, samples_i16: list[int], strip_punct: bool = False) -> str:
-    """Synchronous transcription. Thread-safe via lock."""
+def _transcribe_sync(sess, samples_i16: list[int], strip_punct: bool = False,
+                      cancel_token: CancelToken | None = None) -> str:
+    """Synchronous transcription. Thread-safe via lock.
+
+    Passes np.ndarray directly to Session.transcribe() (AudioInput supports
+    np.ndarray natively), avoiding temp-file disk I/O entirely.
+    """
+    if cancel_token and cancel_token.is_cancelled:
+        return ""
     with _inference_lock:
+        if cancel_token and cancel_token.is_cancelled:
+            return ""
         audio = np.array(samples_i16, dtype=np.float32) / 32768.0
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
-            sf.write(tmp.name, audio, SAMPLE_RATE)
-            result = sess.transcribe(tmp.name, context=_hotword_context)
+        result = sess.transcribe(audio, context=_hotword_context)
         text = result.text.strip() if result and result.text else ""
         if strip_punct and text:
             text = _PUNCT_RE.sub("", text)
@@ -243,11 +279,9 @@ def main():
     print(f"Loading Qwen3-ASR model from {_model_path}...", flush=True)
     t0 = time.monotonic()
     sess = get_session()
-    # Trigger model load with dummy transcription
+    # Trigger model load with dummy transcription (np.ndarray, no temp file)
     dummy = np.zeros(SAMPLE_RATE, dtype=np.float32)
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
-        sf.write(tmp.name, dummy, SAMPLE_RATE)
-        sess.transcribe(tmp.name)
+    sess.transcribe(dummy)
     elapsed = time.monotonic() - t0
     print(f"Model loaded in {elapsed:.1f}s", flush=True)
 
