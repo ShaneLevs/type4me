@@ -96,9 +96,9 @@ if [ "${BUNDLE_SENSEVOICE_MODEL:-0}" = "1" ] && [ -d "$SENSEVOICE_MODEL_CACHE" ]
     echo "SenseVoice model bundled."
 fi
 
-# Copy sensevoice-server if built
+# Copy sensevoice-server if built and BUNDLE_LOCAL_ASR is set
 SENSEVOICE_DIST="$PROJECT_DIR/sensevoice-server/dist/sensevoice-server"
-if [ -d "$SENSEVOICE_DIST" ]; then
+if [ "${BUNDLE_LOCAL_ASR:-0}" = "1" ] && [ -d "$SENSEVOICE_DIST" ]; then
     echo "Bundling sensevoice-server..."
     cp -R "$SENSEVOICE_DIST" "$APP_PATH/Contents/MacOS/sensevoice-server-dist"
     # Create a wrapper script at the expected path
