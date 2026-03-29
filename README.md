@@ -61,7 +61,7 @@ macOS 14+ (Sonoma)
 
 ### 云端流式识别（需自备API Key）
 接入火山引擎（豆包）\OpenAi\Deepgram\AssemblyAI\Soniox\阿里云百炼\百度智能云，边说边出字。性能模式下还支持双通道识别，实时识别结束后用完整录音优化结果。
-欢迎共建接入其他厂商的模型，豆包现在注册送20-40小时识别，[配置指引](https://my.feishu.cn/wiki/QdEnwBMfUi0mN4k3ucMcNYhUnXr)）
+欢迎共建接入其他厂商的模型。（豆包现在注册送20-40小时识别，[配置指引](https://my.feishu.cn/wiki/QdEnwBMfUi0mN4k3ucMcNYhUnXr)）
 
 ### 自定义处理模式（需配置LLM API Key）
 
