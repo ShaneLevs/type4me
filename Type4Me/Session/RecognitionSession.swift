@@ -132,6 +132,7 @@ actor RecognitionSession {
         self.recordingStartTime = nil
         hasEmittedReadyForCurrentSession = false
         injectionAborted = false
+        pendingLLMError = nil
         state = .starting
 
         // Load credentials for selected provider
