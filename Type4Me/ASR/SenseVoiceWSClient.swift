@@ -270,6 +270,8 @@ actor SenseVoiceWSClient: SpeechRecognizer {
     // MARK: - Disconnect
 
     func disconnect() async {
+        qwen3DebounceTask?.cancel()
+        qwen3DebounceTask = nil
         receiveTask?.cancel()
         receiveTask = nil
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
