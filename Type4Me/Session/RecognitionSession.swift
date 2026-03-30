@@ -583,15 +583,9 @@ actor RecognitionSession {
                 characterCount: finalText.count
             ))
 
-            if injectionAborted {
-                onASREvent?(.error(NSError(domain: "Type4Me", code: -21, userInfo: [
-                    NSLocalizedDescriptionKey: L("已取消粘贴", "Paste cancelled")
-                ])))
-            } else if llmFailed {
-                onASREvent?(.error(NSError(domain: "Type4Me", code: -20, userInfo: [
-                    NSLocalizedDescriptionKey: L("LLM 处理失败，已回退原文", "LLM failed, raw text used")
-                ])))
-            }
+            // Note: injectionAborted and llmFailed info is already conveyed
+            // through the .finalized event's InjectionOutcome / completionMessage.
+            // No separate .error emission here to avoid green→red UI flash.
 
         } else {
             // No text recognized: tell UI to exit processing state
