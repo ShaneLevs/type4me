@@ -116,7 +116,8 @@ actor SenseVoiceServerManager {
         }
         self.process = proc
 
-        let portResult = await readPortFromStdout(pipe: pipe, timeout: 60)
+        // SenseVoice model loading via PyTorch/FunASR is slow (~2 min), needs generous timeout
+        let portResult = await readPortFromStdout(pipe: pipe, timeout: 180)
         guard let discoveredPort = portResult else {
             proc.terminate()
             self.process = nil
