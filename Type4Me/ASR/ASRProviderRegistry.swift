@@ -96,15 +96,11 @@ enum ASRProviderRegistry {
             .iflytek: ProviderEntry(configType: IflytekASRConfig.self, createClient: nil),
             .custom:  ProviderEntry(configType: CustomASRConfig.self,  createClient: nil),
         ]
-        #if HAS_SHERPA_ONNX
         dict[.sherpa] = ProviderEntry(
             configType: SherpaASRConfig.self,
-            createClient: { SenseVoiceWSClient() },
-            capabilities: .batch()  // full_inference at end takes 3-5s, needs longer timeout
+            createClient: { SenseVoiceASRClient() },  // Native sherpa-onnx
+            capabilities: .batch()
         )
-        #else
-        dict[.sherpa] = ProviderEntry(configType: SherpaASRConfig.self, createClient: nil)
-        #endif
         return dict
     }()
 
