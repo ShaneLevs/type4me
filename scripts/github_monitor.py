@@ -8,11 +8,13 @@ import sys
 from datetime import datetime, timezone, timedelta
 from urllib.request import urlopen, Request
 
-GITHUB_TOKEN = "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"
+import os
+
+GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 REPO = "joewongjc/type4me"
-FEISHU_APP_ID = "cli_a915ad6bf4389bcd"
-FEISHU_APP_SECRET = "39xdCMkFPq49FUNcztLt0eyA8hb0nGXt"
-OPEN_ID = "ou_675483f336f30eee5d388a75a2b79d34"
+FEISHU_APP_ID = os.environ["FEISHU_APP_ID"]
+FEISHU_APP_SECRET = os.environ["FEISHU_APP_SECRET"]
+OPEN_ID = os.environ["FEISHU_OPEN_ID"]
 
 # 多取 10 分钟，防止 cron 抖动漏掉
 LOOKBACK = timedelta(hours=2, minutes=10)
