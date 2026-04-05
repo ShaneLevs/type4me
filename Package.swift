@@ -40,5 +40,6 @@ if hasSherpaFramework {
 let package = Package(
     name: "Type4Me",
     platforms: [.macOS(.v14)],
+    dependencies: [],
     targets: targets
 )

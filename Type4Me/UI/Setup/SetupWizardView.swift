@@ -7,12 +7,13 @@ struct SetupWizardView: View {
     @Environment(AppState.self) private var appState
     @State private var step = 0
     @AppStorage("tf_language") private var language = AppLanguage.systemDefault
+    private let totalSteps = 4
 
     var body: some View {
         VStack(spacing: 0) {
             // Progress indicator
             HStack(spacing: 8) {
-                ForEach(0..<6, id: \.self) { i in
+                ForEach(0..<totalSteps, id: \.self) { i in
                     Capsule()
                         .fill(i <= step ? TF.amber : Color.secondary.opacity(0.15))
                         .frame(height: 3)
@@ -25,22 +26,7 @@ struct SetupWizardView: View {
 
             // Steps
             Group {
-                switch step {
-                case 0: welcomeStep
-                case 1:
-                    VStack(spacing: 0) {
-                        QuickModeDemoStep()
-                        navigationFooter { step = 2 }
-                    }
-                case 2:
-                    VStack(spacing: 0) {
-                        CustomModeDemoStep()
-                        navigationFooter { step = 3 }
-                    }
-                case 3: permissionsStep
-                case 4: providerStep
-                default: readyStep
-                }
+                stepContent
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .transition(.asymmetric(
@@ -51,6 +37,18 @@ struct SetupWizardView: View {
         }
         .frame(width: 750, height: 520)
         .id(language)
+    }
+
+    // MARK: - Step Router
+
+    @ViewBuilder
+    private var stepContent: some View {
+        switch step {
+        case 0: welcomeStep
+        case 1: providerStep
+        case 2: permissionsStep
+        default: readyStep
+        }
     }
 
     // MARK: - Navigation Footer
@@ -92,7 +90,7 @@ struct SetupWizardView: View {
 
             Spacer()
 
-            Button(L("开始设置", "Get Started")) { step = 1 }
+            Button(L("开始设置", "Get Started")) { step = 1 }  // → provider step
                 .buttonStyle(.borderedProminent)
                 .tint(TF.amber)
                 .controlSize(.large)
@@ -100,7 +98,7 @@ struct SetupWizardView: View {
         }
     }
 
-    // MARK: - Step 3: Permissions
+    // MARK: - Step 2: Permissions
 
     @State private var hasMic = false
     @State private var hasAccessibility = false
@@ -130,7 +128,6 @@ struct SetupWizardView: View {
                     detail: L("全局快捷键 + 文字注入", "Global hotkeys + text injection"),
                     granted: hasAccessibility
                 ) {
-                    // Register in system list AND open system preferences
                     PermissionManager.promptAccessibilityPermission()
                     PermissionManager.openAccessibilitySettings()
                 }
@@ -149,7 +146,7 @@ struct SetupWizardView: View {
 
             Spacer()
 
-            navigationFooter { step = 4 }
+            navigationFooter { step = 3 }
         }
         .onAppear { refreshPermissions() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -162,7 +159,7 @@ struct SetupWizardView: View {
         hasAccessibility = AXIsProcessTrusted()
     }
 
-    // MARK: - Step 4: Provider + Credentials
+    // MARK: - Step 1: Provider + Credentials
 
     @State private var selectedProvider: ASRProvider = .volcano
     @State private var credentialValues: [String: String] = [:]
@@ -177,7 +174,6 @@ struct SetupWizardView: View {
             return !val.isEmpty
         }
     }
-
 
     private var providerStep: some View {
         VStack(spacing: 24) {
@@ -203,7 +199,6 @@ struct SetupWizardView: View {
                 .labelsHidden()
                 .frame(width: 300)
                 .onChange(of: selectedProvider) { _, newProvider in
-                    // Prefill defaults
                     var defaults: [String: String] = [:]
                     let fields = ASRProviderRegistry.configType(for: newProvider)?.credentialFields ?? []
                     for field in fields where !field.defaultValue.isEmpty {
@@ -211,7 +206,6 @@ struct SetupWizardView: View {
                     }
                     credentialValues = defaults
                 }
-
 
                 // Dynamic credential fields
                 ForEach(currentFields) { field in
@@ -244,7 +238,7 @@ struct SetupWizardView: View {
             Spacer()
 
             HStack {
-                Button(L("跳过", "Skip")) { step = 5 }
+                Button(L("跳过", "Skip")) { step = 2 }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -255,7 +249,7 @@ struct SetupWizardView: View {
                         )
                         KeychainService.selectedASRProvider = selectedProvider
                     }
-                    step = 5
+                    step = 2
                 }
                     .buttonStyle(.borderedProminent)
                     .tint(TF.amber)
@@ -265,7 +259,7 @@ struct SetupWizardView: View {
         }
     }
 
-    // MARK: - Step 5: Ready
+    // MARK: - Step 3: Ready
 
     private var readyStep: some View {
         VStack(spacing: 28) {

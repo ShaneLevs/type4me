@@ -167,8 +167,9 @@ struct ProcessingMode: Codable, Identifiable, Equatable, Hashable {
     4. 删除非必要重复，除非明显属于有意强调。
     5. 如果用户中途改口，只保留最终真正想表达的版本。
     6. 提高可读性和流畅度，但以轻编辑为主，不做过度重写。
-    7. 使用数字序号时采用总分结构
-    8. 直接返回改写后的文本，不添加任何解释
+    7. 不要在中英文之间额外添加或删除空格，保持原文的空格方式。
+    8. 使用数字序号时采用总分结构
+    9. 直接返回改写后的文本，不添加任何解释
 
     #示例：
     我觉得阅读有很多好处：
@@ -386,6 +387,13 @@ final class AppState {
     }
 
     func finalize(text: String, outcome: InjectionOutcome) {
+        // Only accept finalization while the bar is in processing state.
+        // A stale .finalized from a previous session's detached task must not
+        // overwrite a new recording that has already started.
+        guard barPhase == .processing else {
+            DebugFileLogger.log("finalize: ignored (barPhase=\(barPhase), expected .processing)")
+            return
+        }
         guard !text.isEmpty else {
             cancel()
             return
@@ -435,9 +443,10 @@ final class AppState {
     private var hideGeneration = 0
 
     private func showDone(message: String = L("已完成", "Done")) {
+        DebugFileLogger.log("showDone: barPhase → .done, message=\(message)")
         feedbackMessage = message
         barPhase = .done
-        scheduleAutoHide(for: .done, delay: .seconds(0.8))
+        scheduleAutoHide(for: .done, delay: .seconds(0.5))
     }
 
     private func scheduleAutoHide(for phase: FloatingBarPhase, delay: Duration) {
@@ -446,6 +455,7 @@ final class AppState {
         Task { @MainActor in
             try? await Task.sleep(for: delay)
             guard barPhase == phase, hideGeneration == myGeneration else { return }
+            DebugFileLogger.log("autoHide: barPhase → .hidden (was \(phase))")
             barPhase = .hidden
             onHidePanel?()
         }

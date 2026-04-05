@@ -192,12 +192,6 @@ struct ASRSettingsCard: View, SettingsCardHelpers {
                         .padding(.top, 4)
                 }
 
-                if let note = currentProviderNote {
-                    Text(note)
-                        .font(.system(size: 10))
-                        .foregroundStyle(TF.settingsTextTertiary)
-                        .padding(.top, 4)
-                }
 
 
             }

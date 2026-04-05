@@ -58,6 +58,11 @@ actor RecognitionSession {
         return DoubaoChatClient(provider: provider)
     }
 
+    /// Load LLM credentials from KeychainService.
+    private func loadEffectiveLLMConfig() -> LLMConfig? {
+        KeychainService.loadLLMConfig()
+    }
+
     /// Pre-initialize audio subsystem so the first recording starts instantly.
     func warmUp() { audioEngine.warmUp() }
 
@@ -138,6 +143,7 @@ actor RecognitionSession {
 
         let provider = KeychainService.selectedASRProvider
         activeProvider = provider
+
         let effectiveMode = ASRProviderRegistry.resolvedMode(for: mode, provider: provider)
         sessionGeneration &+= 1
         let myGeneration = sessionGeneration
@@ -350,7 +356,7 @@ actor RecognitionSession {
         DebugFileLogger.log("ASR pipeline live, flushed \(bufferedChunks.count) buffered chunks")
 
         // Pre-warm LLM connection for modes with post-processing
-        if !currentMode.prompt.isEmpty, let llmConfig = KeychainService.loadLLMConfig() {
+        if !currentMode.prompt.isEmpty, let llmConfig = loadEffectiveLLMConfig() {
             let client = currentLLMClient()
             Task { await client.warmUp(baseURL: llmConfig.baseURL) }
         }
@@ -411,29 +417,6 @@ actor RecognitionSession {
         let needsLLM = !currentMode.prompt.isEmpty
         let provider = activeProvider
 
-        // Kick off Soniox async calibration EARLY, in parallel with RT teardown.
-        // Grab audio now before audioEngine.stop() clears it.
-        let sonioxAsyncEnabled = provider == .soniox
-            && UserDefaults.standard.bool(forKey: "tf_sonioxAsyncCalibration")
-        var sonioxAsyncTask: Task<SonioxAsyncClient.TranscriptionResult?, Never>?
-        if sonioxAsyncEnabled, let sonioxConfig = currentConfig as? SonioxASRConfig {
-            let fullAudio = audioEngine.getRecordedAudio()
-            if !fullAudio.isEmpty {
-                let hotwords = HotwordStorage.loadEffective()
-                let bypass = ProxyBypassMode.current.bypassASR
-                let apiKey = sonioxConfig.apiKey
-                DebugFileLogger.log("stop: Soniox async kicked off early (\(fullAudio.count) bytes)")
-                sonioxAsyncTask = Task.detached {
-                    await SonioxAsyncClient.transcribe(
-                        audioData: fullAudio,
-                        apiKey: apiKey,
-                        hotwords: hotwords,
-                        bypassProxy: bypass
-                    )
-                }
-            }
-        }
-
         // ASR teardown: send endAudio and drain event stream with hard deadlines.
         // Uses detached tasks + continuation so a stuck client can't block stopRecording.
         let providerIsStreaming = ASRProviderRegistry.capabilities(for: provider).isStreaming
@@ -451,7 +434,7 @@ actor RecognitionSession {
             // Always try to drain events — even if endAudio failed, the server
             // may have already queued transcript events before the connection broke.
             if let evtTask = eventConsumptionTask {
-                let drainTimeout: Duration = providerIsStreaming ? .seconds(2) : .seconds(5)
+                let drainTimeout: Duration = providerIsStreaming ? .seconds(5) : .seconds(5)
                 let drained = await withTimeout(drainTimeout) {
                     await evtTask.value
                 }
@@ -481,7 +464,7 @@ actor RecognitionSession {
                     earlyLLMTask = specTask
                     state = .postProcessing
                     DebugFileLogger.log("stop: reusing speculative LLM +\(ContinuousClock.now - stopT0)")
-                } else if let llmConfig = KeychainService.loadLLMConfig() {
+                } else if let llmConfig = loadEffectiveLLMConfig() {
                     // Final transcript differs from speculative input (tail words arrived),
                     // discard stale result and fire fresh LLM with complete text.
                     speculativeLLMTask?.cancel()
@@ -516,12 +499,18 @@ actor RecognitionSession {
             return
         }
 
-        // Batch fallback: if streaming broke mid-session, always retry with
-        // the full local recording to get complete text, even if we have partial.
-        let streamingFailed = uploadFailureFlag?.failed == true || !asrTeardownClean
-        if streamingFailed {
+        // Batch fallback: only when the server is truly missing audio (upload failed).
+        // If upload was fine but drain timed out, the server already has all audio;
+        // use whatever streaming produced rather than re-sending everything.
+        let uploadFailed = uploadFailureFlag?.failed == true
+        let hasUsableStreamingResult = !currentTranscript.confirmedSegments.isEmpty
+        let needsBatchFallback = uploadFailed || (!asrTeardownClean && !hasUsableStreamingResult)
+        if !asrTeardownClean && !uploadFailed && hasUsableStreamingResult {
+            DebugFileLogger.log("stop: drain timeout but streaming has confirmed text, skipping batch fallback")
+        }
+        if needsBatchFallback {
             let partialText = currentTranscript.composedText
-            DebugFileLogger.log("stop: streaming failed (partial=\(partialText.count) chars), attempting batch fallback")
+            DebugFileLogger.log("stop: streaming failed (partial=\(partialText.count) chars, uploadFailed=\(uploadFailed)), attempting batch fallback")
             let fullAudio = audioEngine.getRecordedAudio()
             if !fullAudio.isEmpty, let config = currentConfig {
                 onASREvent?(.processingResult(text: partialText.isEmpty ? "重新识别中..." : partialText))
@@ -539,27 +528,6 @@ actor RecognitionSession {
             }
         }
         uploadFailureFlag = nil
-
-        // Await Soniox async calibration result (kicked off earlier, in parallel with RT teardown).
-        if let asyncTask = sonioxAsyncTask {
-            let rtText = currentTranscript.composedText
-            onASREvent?(.processingResult(text: rtText))
-            if let result = await asyncTask.value, !result.text.isEmpty {
-                let changed = result.text != rtText
-                DebugFileLogger.log("stop: Soniox async done, \(result.text.count) chars, changed=\(changed)")
-                if changed {
-                    NSLog("[Session] Soniox async calibration changed result")
-                }
-                currentTranscript = RecognitionTranscript(
-                    confirmedSegments: [result.text],
-                    partialText: "",
-                    authoritativeText: result.text,
-                    isFinal: true
-                )
-            } else {
-                DebugFileLogger.log("stop: Soniox async failed, using RT result")
-            }
-        }
 
         // Combine confirmed segments + any trailing unconfirmed partial.
         let effectiveText = currentTranscript.displayText
@@ -602,9 +570,10 @@ actor RecognitionSession {
 
                 if let result = earlyResult, !result.isEmpty {
                     DebugFileLogger.log("stop: early LLM result received \(result.count) chars +\(ContinuousClock.now - stopT0)")
-                    processedText = result
-                    finalText = result
-                    onASREvent?(.processingResult(text: result))
+                    let cleaned = result.collapsingExtraSpaces
+                    processedText = cleaned
+                    finalText = cleaned
+                    onASREvent?(.processingResult(text: cleaned))
                 } else {
                     let err = pendingLLMError ?? LLMError.emptyResponse(nil)
                     DebugFileLogger.log("stop: early LLM failed, falling back to raw text: \(err)")
@@ -614,7 +583,7 @@ actor RecognitionSession {
                 }
             } else if needsLLM {
                 state = .postProcessing
-                if let llmConfig = KeychainService.loadLLMConfig() {
+                if let llmConfig = loadEffectiveLLMConfig() {
                     DebugFileLogger.log("stop: sync LLM firing mode=\(currentMode.name) model=\(llmConfig.model) with \(finalText.count) chars")
                     let client = currentLLMClient()
                     let prompt = promptContext.expandContextVariables(currentMode.prompt)
@@ -650,9 +619,10 @@ actor RecognitionSession {
                     }
 
                     if let result = llmResult {
-                        processedText = result
-                        finalText = result
-                        onASREvent?(.processingResult(text: result))
+                        let cleaned = result.collapsingExtraSpaces
+                        processedText = cleaned
+                        finalText = cleaned
+                        onASREvent?(.processingResult(text: cleaned))
                     } else {
                         llmFailed = true
                         onASREvent?(.processingResult(text: rawText))
@@ -664,6 +634,8 @@ actor RecognitionSession {
                 }
             }
 
+            finalText = finalText.removingCJKLatinSpaces
+
             state = .injecting
             let defaults = UserDefaults.standard
             injectionEngine.preserveClipboard = defaults.object(forKey: "tf_preserveClipboard") != nil
@@ -671,11 +643,12 @@ actor RecognitionSession {
                 : true
 
             // Run injection on a detached task to avoid blocking the actor with usleep().
-            // The actor yields cooperatively via withCheckedContinuation; .finalized is
-            // still emitted only after injection completes, preserving ordering.
+            // .finalized is emitted directly from the detached task so the UI updates
+            // immediately after paste, without waiting for actor re-scheduling.
             let engine = injectionEngine
             let aborted = injectionAborted
-            let injectLog = "stop: injecting method=clipboard text=[\(finalText.prefix(50))] len=\(finalText.count) +\(ContinuousClock.now - stopT0)"
+            let onEvent = self.onASREvent
+            let injectLog = "stop: injecting method=clipboard len=\(finalText.count) +\(ContinuousClock.now - stopT0)"
             let injectionOutcome: InjectionOutcome = await withCheckedContinuation { continuation in
                 Task.detached {
                     let outcome: InjectionOutcome
@@ -687,10 +660,14 @@ actor RecognitionSession {
                         DebugFileLogger.log(injectLog)
                         outcome = engine.inject(finalText)
                     }
+                    // Notify UI immediately from this thread, before actor resumes
+                    onEvent?(.finalized(text: finalText, injection: outcome))
+                    DebugFileLogger.log("stop: finalized emitted from injection task")
+                    // Clipboard restore can happen after UI is notified
+                    engine.finishClipboardRestore()
                     continuation.resume(returning: outcome)
                 }
             }
-            onASREvent?(.finalized(text: finalText, injection: injectionOutcome))
 
             // Save to history
             let recordId = UUID().uuidString
@@ -698,7 +675,7 @@ actor RecognitionSession {
             let status: String
             if injectionAborted { status = "aborted" }
             else if llmFailed { status = "llm_error" }
-            else if streamingFailed { status = "stream_recovered" }
+            else if needsBatchFallback { status = "stream_recovered" }
             else { status = "completed" }
             await historyStore.insert(HistoryRecord(
                 id: recordId,
@@ -709,7 +686,8 @@ actor RecognitionSession {
                 processedText: processedText,
                 finalText: finalText,
                 status: status,
-                characterCount: finalText.count
+                characterCount: finalText.count,
+                asrProvider: activeProvider.displayName
             ))
 
             // Note: injectionAborted and llmFailed info is already conveyed
@@ -717,24 +695,9 @@ actor RecognitionSession {
             // No separate .error emission here to avoid green→red UI flash.
 
         } else {
-            // No text recognized: save to history as failed, then exit.
+            // No text recognized: skip history entry (don't save empty records)
             let duration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
-            if duration > 1.0 {
-                // Only save if recording lasted more than 1 second (skip accidental taps)
-                let status = streamingFailed ? "stream_failed" : "empty"
-                await historyStore.insert(HistoryRecord(
-                    id: UUID().uuidString,
-                    createdAt: Date(),
-                    durationSeconds: duration,
-                    rawText: "",
-                    processingMode: currentMode == .direct ? nil : currentMode.name,
-                    processedText: nil,
-                    finalText: "",
-                    status: status,
-                    characterCount: 0
-                ))
-                DebugFileLogger.log("stop: no text recognized, saved to history as \(status)")
-            }
+            DebugFileLogger.log("stop: no text recognized (duration=\(duration)s), skipping history entry")
             onASREvent?(.processingResult(text: ""))
             onASREvent?(.completed)
         }
@@ -933,7 +896,7 @@ actor RecognitionSession {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         text = SnippetStorage.applyEffective(to: text)
         guard !text.isEmpty, text != speculativeLLMText else { return }
-        guard let llmConfig = KeychainService.loadLLMConfig() else { return }
+        guard let llmConfig = loadEffectiveLLMConfig() else { return }
 
         // Cancel previous speculative call if text changed
         speculativeLLMTask?.cancel()
@@ -1010,19 +973,53 @@ actor RecognitionSession {
 
     // MARK: - Batch Fallback
 
-    /// Try to transcribe full audio via the same provider in a fresh connection.
+    /// Try to transcribe full audio via the same provider.
+    /// Soniox uses its async REST API (faster for complete audio); others use a fresh streaming connection.
     private func attemptBatchFallback(audio: Data, config: any ASRProviderConfig) async -> String? {
         let provider = activeProvider
+
+        // Soniox: use async REST API instead of re-streaming
+        if provider == .soniox, let sonioxConfig = config as? SonioxASRConfig {
+            let bypass = ProxyBypassMode.current.bypassASR
+            let hotwords = HotwordStorage.loadEffective()
+            let apiKey = sonioxConfig.apiKey
+            DebugFileLogger.log("batch fallback: using Soniox async API (\(audio.count) bytes)")
+            let resultTask = Task.detached {
+                await SonioxAsyncClient.transcribe(
+                    audioData: audio,
+                    apiKey: apiKey,
+                    hotwords: hotwords,
+                    bypassProxy: bypass
+                )
+            }
+            return await withCheckedContinuation { continuation in
+                let finished = OSAllocatedUnfairLock(initialState: false)
+                Task.detached {
+                    let result = await resultTask.value
+                    if finished.withLock({ let old = $0; $0 = true; return !old }) {
+                        continuation.resume(returning: result?.text)
+                    }
+                }
+                Task.detached {
+                    try? await Task.sleep(for: .seconds(30))
+                    if finished.withLock({ let old = $0; $0 = true; return !old }) {
+                        resultTask.cancel()
+                        DebugFileLogger.log("batch fallback (async) timeout after 30s")
+                        continuation.resume(returning: nil)
+                    }
+                }
+            }
+        }
+
+        // Other providers: fresh streaming connection with all audio at once
         let resultTask = Task.detached { () -> String? in
             guard let client = ASRProviderRegistry.createClient(for: provider) else { return nil }
             do {
                 let options = ASRRequestOptions(enablePunc: true)
                 try await client.connect(config: config, options: options)
-                // Send all audio at once, then signal end
                 try await client.sendAudio(audio)
                 try await client.endAudio()
 
-                // Wait for final transcript
                 let events = await client.events
                 for await event in events {
                     switch event {
@@ -1101,4 +1098,28 @@ actor RecognitionSession {
         SystemVolumeManager.restore()
     }
 
+}
+
+// MARK: - String helpers
+
+private extension String {
+    /// Collapse runs of 2+ spaces into a single space.
+    /// LLMs sometimes insert extra spaces between CJK and Latin text.
+    var collapsingExtraSpaces: String {
+        replacingOccurrences(of: " {2,}", with: " ", options: .regularExpression)
+    }
+
+    /// Remove spaces at CJK ↔ Latin/digit boundaries.
+    /// Both ASR engines and LLMs tend to insert spaces between Chinese and
+    /// English text; this strips them while keeping inter-word English spaces.
+    var removingCJKLatinSpaces: String {
+        let cjk = "[\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uF900-\\uFAFF]"
+        let latin = "[A-Za-z0-9]"
+        var s = self
+        // CJK + space + Latin:  "中 E" → "中E"
+        s = s.replacingOccurrences(of: "(\(cjk)) (\(latin))", with: "$1$2", options: .regularExpression)
+        // Latin + space + CJK:  "E 中" → "E中"
+        s = s.replacingOccurrences(of: "(\(latin)) (\(cjk))", with: "$1$2", options: .regularExpression)
+        return s
+    }
 }

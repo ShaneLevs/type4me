@@ -7,7 +7,6 @@ struct ASRRequestOptions: Sendable, Equatable {
     var boostingTableID: String?
     var contextHistoryLength: Int = 20
     var bypassProxy: Bool = false
-
     var urlSessionConfiguration: URLSessionConfiguration {
         let config = URLSessionConfiguration.default
         if bypassProxy {

@@ -29,6 +29,7 @@ struct FloatingBarView<S: FloatingBarState>: View {
 
     let state: S
 
+
     @State private var breathe = false
     @State private var doneGlow = true
     /// High-water mark: only grows during recording, never shrinks (prevents ASR correction jitter)
@@ -60,10 +61,10 @@ struct FloatingBarView<S: FloatingBarState>: View {
         Group {
             if state.barPhase != .hidden {
                 capsuleBar
-                    .transition(.asymmetric(
-                        insertion: .scale(scale: 0.92).combined(with: .opacity),
-                        removal: .opacity
-                    ))
+                .transition(.asymmetric(
+                    insertion: .scale(scale: 0.92).combined(with: .opacity),
+                    removal: .opacity
+                ))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

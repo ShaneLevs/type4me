@@ -41,7 +41,8 @@ enum SonioxProtocol {
     private static let ignoredMarkerTokens: Set<String> = ["<end>", "<fin>"]
 
     static func buildWebSocketURL() throws -> URL {
-        guard let url = URL(string: endpoint) else {
+        let urlString = endpoint
+        guard let url = URL(string: urlString) else {
             throw SonioxProtocolError.invalidEndpoint
         }
         return url
@@ -52,7 +53,6 @@ enum SonioxProtocol {
         options: ASRRequestOptions
     ) throws -> String {
         var payload: [String: Any] = [
-            "api_key": config.apiKey,
             "model": config.model,
             "audio_format": "pcm_s16le",
             "sample_rate": 16000,
@@ -62,6 +62,7 @@ enum SonioxProtocol {
             "language_hints": ["zh", "en"],
             "language_hints_strict": true,
         ]
+        payload["api_key"] = config.apiKey
 
         let terms = sanitizedTerms(from: options.hotwords)
         if !terms.isEmpty {
