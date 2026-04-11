@@ -20,6 +20,7 @@ struct GeneralSettingsTab: View, SettingsCardHelpers {
     @AppStorage("tf_showDockIcon") private var showDockIcon = true
     @AppStorage("tf_bypassProxy") private var bypassProxy = "off"
     @AppStorage("tf_stripTrailingPunctuation") private var stripTrailingPunctuation = "off"
+    @AppStorage("tf_escAbort") private var escAbortEnabled = true
 
     @State private var hasMic = false
     @State private var hasAccessibility = false
@@ -140,25 +141,52 @@ struct GeneralSettingsTab: View, SettingsCardHelpers {
             // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
             settingsGroupCard(L("高级设置", "Advanced"), icon: "wrench.and.screwdriver") {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(L("绕过系统代理", "Bypass System Proxy").uppercased())
-                        .font(.system(size: 10, weight: .semibold))
-                        .tracking(0.8)
-                        .foregroundStyle(TF.settingsTextTertiary)
-                    settingsDropdown(
-                        selection: $bypassProxy,
-                        options: [
-                            ("off", L("关闭", "Off")),
-                            ("all", L("全局绕过", "All Connections")),
-                            ("asr", L("语音识别绕过", "ASR Only")),
-                            ("llm", L("文本处理 LLM 绕过", "LLM Only")),
-                        ]
-                    )
-                    Text(L("不经过代理软件，直连对应服务器", "Connect directly to servers, bypassing proxy"))
-                        .font(.system(size: 10))
-                        .foregroundStyle(TF.settingsTextTertiary)
+                VStack(alignment: .leading, spacing: 0) {
+                    // ESC打断
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(L("ESC 打断录音", "ESC to Abort").uppercased())
+                            .font(.system(size: 10, weight: .semibold))
+                            .tracking(0.8)
+                            .foregroundStyle(TF.settingsTextTertiary)
+                        settingsDropdown(
+                            selection: Binding(
+                                get: { escAbortEnabled ? "on" : "off" },
+                                set: { escAbortEnabled = $0 == "on" }
+                            ),
+                            options: [
+                                ("on", L("开启", "On")),
+                                ("off", L("关闭", "Off")),
+                            ]
+                        )
+                        Text(L("录音或处理过程中按 ESC 直接结束，不存剪贴板", "Press ESC during recording or processing to end directly without clipboard"))
+                            .font(.system(size: 10))
+                            .foregroundStyle(TF.settingsTextTertiary)
+                    }
+                    .padding(.vertical, 6)
+
+                    SettingsDivider()
+
+                    // 绕过系统代理
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(L("绕过系统代理", "Bypass System Proxy").uppercased())
+                            .font(.system(size: 10, weight: .semibold))
+                            .tracking(0.8)
+                            .foregroundStyle(TF.settingsTextTertiary)
+                        settingsDropdown(
+                            selection: $bypassProxy,
+                            options: [
+                                ("off", L("关闭", "Off")),
+                                ("all", L("全局绕过", "All Connections")),
+                                ("asr", L("语音识别绕过", "ASR Only")),
+                                ("llm", L("文本处理 LLM 绕过", "LLM Only")),
+                            ]
+                        )
+                        Text(L("不经过代理软件，直连对应服务器", "Connect directly to servers, bypassing proxy"))
+                            .font(.system(size: 10))
+                            .foregroundStyle(TF.settingsTextTertiary)
+                    }
+                    .padding(.vertical, 6)
                 }
-                .padding(.vertical, 6)
             }
 
         }

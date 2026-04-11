@@ -302,7 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // ESC abort: skip injection but let recognition/clipboard/history proceed.
+        // ESC abort: immediately stop all processing
         // Returns true if the abort was actually handled (ESC should be swallowed).
         hotkeyManager.onESCAbort = { [weak self] in
             guard let self else { return false }
@@ -310,12 +310,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard phase == .recording || phase == .processing || phase == .preparing else {
                 return false  // Not in an active session, let ESC pass through
             }
-            NSLog("[Type4Me] >>> HOTKEY: ESC abort injection (phase=%@)", String(describing: phase))
-            DebugFileLogger.log("hotkey ESC abort injection phase=\(phase)")
+            NSLog("[Type4Me] >>> HOTKEY: ESC abort (phase=%@)", String(describing: phase))
+            DebugFileLogger.log("hotkey ESC abort phase=\(phase)")
             MainActor.assumeIsolated { self.appState.stopRecording() }
             Task {
-                await self.session.abortInjection()
-                await self.session.stopRecording()
+                await self.session.abort()
             }
             return true
         }
@@ -334,7 +333,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func syncESCAbortSetting() {
-        hotkeyManager.isESCAbortEnabled = true
+        // 默认开启ESC打断；若 UserDefaults 无此 key 则返回 true
+        hotkeyManager.isESCAbortEnabled = UserDefaults.standard.object(forKey: "tf_escAbort") as? Bool ?? true
     }
 
     private var retryTimer: Timer?

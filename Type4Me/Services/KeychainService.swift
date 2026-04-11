@@ -390,8 +390,22 @@ enum KeychainService {
                 throw KeychainError.saveFailed(updateStatus)
             }
         case errSecItemNotFound:
+            // Create access control that allows this app to access without prompting
+            var trustedApp: SecTrustedApplication?
+            let appPath = Bundle.main.bundlePath as NSString
+            SecTrustedApplicationCreateFromPath(appPath.utf8String, &trustedApp)
+
+            var accessRef: SecAccess?
+            if let trustedApp {
+                // Create access with NULL ACL (allows self without prompt)
+                SecAccessCreate("Type4Me Keychain" as CFString, [trustedApp] as CFArray, &accessRef)
+            }
+
             var addQuery = query
             addQuery.merge(attributes) { _, new in new }
+            if let accessRef {
+                addQuery[kSecAttrAccess as String] = accessRef
+            }
             let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
             guard addStatus == errSecSuccess else {
                 throw KeychainError.saveFailed(addStatus)

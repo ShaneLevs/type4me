@@ -813,6 +813,10 @@ private struct ModeDetailInner: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                     .background(RoundedRectangle(cornerRadius: 8).fill(TF.settingsCardAlt))
+                Text(L("变量: {text} 转写文本, {selected} 选中文本, {clipboard} 剪切板。留空则直接输出",
+                       "Variables: {text} transcribed text, {selected} selected text, {clipboard} clipboard. Leave empty for raw output."))
+                    .font(.system(size: 10))
+                    .foregroundStyle(TF.settingsTextTertiary)
             }
 
             // Save row
@@ -1030,6 +1034,10 @@ private struct FormalWritingDetailInner: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                     .background(RoundedRectangle(cornerRadius: 8).fill(TF.settingsCardAlt))
+                Text(L("变量: {text} 转写文本, {selected} 选中文本, {clipboard} 剪切板。留空则直接输出",
+                       "Variables: {text} transcribed text, {selected} selected text, {clipboard} clipboard. Leave empty for raw output."))
+                    .font(.system(size: 10))
+                    .foregroundStyle(TF.settingsTextTertiary)
             }
 
             Spacer()

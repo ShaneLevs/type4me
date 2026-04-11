@@ -118,6 +118,8 @@ actor RecognitionSession {
     private var pendingLLMError: Error?
     /// When true, skip text injection (paste) but still save to clipboard & history.
     private var injectionAborted = false
+    /// When true, immediately abort the entire session (no LLM, no injection, no history).
+    private var sessionAborted = false
 
     // MARK: - Toggle
 
@@ -384,6 +386,52 @@ actor RecognitionSession {
     func abortInjection() {
         injectionAborted = true
         DebugFileLogger.log("abortInjection: injection will be skipped")
+    }
+
+    /// Immediately abort the entire session: stop all processing, no LLM, no injection, no history.
+    /// Called when ESC is pressed during recording or processing.
+    func abort() async {
+        DebugFileLogger.log("abort: session immediately stopping (state=\(state))")
+        sessionAborted = true
+        injectionAborted = true
+
+        // Cancel speculative LLM if running
+        speculativeLLMTask?.cancel()
+
+        // Stop audio capture immediately
+        audioEngine.stop()
+        audioEngine.onAudioChunk = nil
+        audioEngine.onAudioLevel = nil
+
+        // Disconnect ASR client without waiting
+        if let client = asrClient {
+            Task.detached { await client.disconnect() }
+            asrClient = nil
+        }
+
+        // Cancel event consumption task
+        eventConsumptionTask?.cancel()
+        eventConsumptionTask = nil
+
+        // Reset state immediately
+        sessionGeneration &+= 1
+        state = .idle
+        currentTranscript = .empty
+        hasEmittedReadyForCurrentSession = false
+        currentConfig = nil
+        injectionAborted = false
+        sessionAborted = false
+        pendingLLMError = nil
+        recordingStartTime = nil
+
+        // Restore system volume
+        SystemVolumeManager.restore()
+
+        // Notify UI that session was aborted
+        onASREvent?(.finalized(text: "", injection: .aborted))
+        onASREvent?(.completed)
+
+        DebugFileLogger.log("abort: session reset to idle, UI notified")
     }
 
     func stopRecording() async {
@@ -673,9 +721,9 @@ actor RecognitionSession {
                 Task.detached {
                     let outcome: InjectionOutcome
                     if aborted {
-                        engine.copyToClipboard(finalText)
-                        DebugFileLogger.log("stop: injection aborted by ESC, text saved to clipboard & history")
-                        outcome = .copiedToClipboard
+                        // ESC打断：不存剪贴板，直接结束
+                        DebugFileLogger.log("stop: injection aborted by ESC, no clipboard save")
+                        outcome = .aborted
                     } else {
                         DebugFileLogger.log(injectLog)
                         outcome = engine.inject(finalText)
